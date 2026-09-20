@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Studio · 本地数据分析工作台</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+    <script>
+        // 主题要在样式生效前定下来，否则深色用户会看到一下白屏闪烁
+        (function () {
+            try {
+                var t = localStorage.getItem('ds-theme');
+                if (t !== 'light' && t !== 'dark') {
+                    t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+                        ? 'dark' : 'light';
+                }
+                document.documentElement.dataset.theme = t;
+            } catch (e) {
+                document.documentElement.dataset.theme = 'light';
+            }
+        })();
+    </script>
+</head>
+<body>
+<div id="app">
+    <!-- ================= 侧边栏 ================= -->
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-mark">DS</div>
+            <div>
+                <div class="brand-name">Data Studio</div>
+                <div class="brand-sub">本地数据分析工作台</div>
+            </div>
+        </div>
+
+        <div class="side-scroll">
+            <div class="side-sec">
+                <div class="side-title">数据源</div>
+                <div class="dropzone" id="dropzone">
+                    <div>拖拽文件至此，或点击选择</div>
+                    <small>CSV / Excel / JSON · 单个最大 60MB</small>
+                </div>
+                <input type="file" id="fileInput" multiple hidden accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.json,.jsonl">
+                <div class="row" style="margin-top:8px">
+                    <button class="btn btn-sm" id="btnBrowse">本地文件</button>
+                    <button class="btn btn-sm" id="btnDb">连接数据库</button>
+                </div>
+            </div>
+
+            <div class="side-sec">
+                <div class="side-title">
+                    <span>数据源连接</span>
+                    <button class="btn btn-sm" id="btnDb2" title="新增数据库连接">+ 新建</button>
+                </div>
+                <div id="sourceList"><div class="empty">暂无数据源连接</div></div>
+            </div>
+
+            <div class="side-sec">
+                <div class="side-title">
+                    <span>数据集</span>
+                    <span class="hint" id="dsCount">0</span>
+                </div>
+                <div id="dsList"><div class="empty">尚未载入数据</div></div>
+            </div>
+
+            <div class="side-sec">
+                <div class="side-title">示例数据</div>
+                <div id="sampleList"></div>
+            </div>
+
+            <div class="side-sec">
+                <div class="side-title">会话</div>
+                <div class="hint" id="sessionInfo">初始化中…</div>
+                <button class="btn btn-sm btn-block" id="btnReset" style="margin-top:8px">重置会话</button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ================= 主区 ================= -->
+    <main class="main">
+        <div class="topbar">
+            <div class="topbar-left">
+                <h1 id="ctxTitle">未选择数据集</h1>
+                <span class="ctx" id="ctxSub"></span>
+            </div>
+            <div class="row">
+                <select id="exportFmt" style="width:118px">
+                    <option value="csv">导出 CSV</option>
+                    <option value="xlsx">导出 Excel</option>
+                    <option value="json">导出 JSON</option>
+                    <option value="md">导出 Markdown</option>
+                </select>
+                <button class="btn" id="btnExport">导出</button>
+                <button class="btn btn-primary" id="btnReport">生成分析报告</button>
+                <button class="theme-toggle" id="btnTheme" title="切换深色 / 浅色">☾</button>
+            </div>
+        </div>
+
+        <nav class="tabs">
+            <div class="tab active" data-view="data">数据明细</div>
+            <div class="tab" data-view="eda">数据概览</div>
+            <div class="tab" data-view="chart">可视化</div>
+            <div class="tab" data-view="clean">数据清洗</div>
+            <div class="tab" data-view="sql">SQL 查询</div>
+            <div class="tab" data-view="compare">数据对比</div>
+        </nav>
+
+        <div class="content">
+            <!-- ---------- 数据明细 ---------- -->
+            <section class="view active" id="view-data">
+                <div class="card">
+                    <div class="card-head">
+                        <h3>数据明细 <span class="sub" id="dataMeta"></span></h3>
+                        <div class="row">
+                            <select id="previewN" style="width:120px">
+                                <option value="50">50 行</option>
+                                <option value="100" selected>100 行</option>
+                                <option value="300">300 行</option>
+                                <option value="1000">1000 行</option>
+                            </select>
+                            <button class="btn btn-sm" id="btnRefreshPreview">刷新</button>
+                        </div>
+                    </div>
+                    <div class="card-body" style="padding-bottom:12px">
+                        <div class="form-row">
+                            <div class="field" style="max-width:190px">
+                                <label>筛选列</label>
+                                <select id="fCol"></select>
+                            </div>
+                            <div class="field" style="max-width:150px">
+                                <label>条件</label>
+                                <select id="fOp"></select>
+                            </div>
+                            <div class="field" style="max-width:210px">
+                                <label>值 <span class="hint" id="fValHint"></span></label>
+                                <input type="text" id="fVal" placeholder="">
+                            </div>
+                            <div class="field" style="max-width:110px;justify-content:flex-end">
+                                <label>&nbsp;</label>
+                                <button class="btn btn-sm" id="btnAddFilter">添加条件</button>
+                            </div>
+                        </div>
+                        <div id="filterChips" style="margin-bottom:12px"></div>
+                        <div class="form-row">
+                            <div class="field" style="max-width:200px">
+                                <label>排序列</label>
+                                <select id="sCol"><option value="">不排序</option></select>
+                            </div>
+                            <div class="field" style="max-width:130px">
+                                <label>顺序</label>
+                                <select id="sDir">
+                                    <option value="asc">升序</option>
+                                    <option value="desc">降序</option>
+                                </select>
+                            </div>
+                            <div class="field" style="justify-content:flex-end">
+                                <label>&nbsp;</label>
+                                <button class="btn btn-sm" id="btnClearFilter">清除全部条件</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tbl-wrap" style="max-height:520px"><table class="tbl" id="dataTable"></table></div>
+                </div>
+            </section>
+
+            <!-- ---------- 数据概览 ---------- -->
+            <section class="view" id="view-eda">
+                <div id="edaEmpty" class="card"><div class="card-body empty">
+                    左侧载入数据集后，此处自动生成剖析结果。
+                </div></div>
+                <div id="edaBody" style="display:none">
+                    <div class="kpi-grid" id="kpiGrid"></div>
+                    <div class="card">
+                        <div class="card-head">
+                            <h3>数据质量 <span class="sub" id="qualitySub"></span></h3>
+                            <span class="hint" id="qualityHint"></span>
+                        </div>
+                        <div class="card-body">
+                            <div class="score-wrap">
+                                <div class="score-ring">
+                                    <svg width="96" height="96" viewBox="0 0 96 96">
+                                        <circle cx="48" cy="48" r="40" fill="none" stroke="var(--panel-3)" stroke-width="9"/>
+                                        <circle id="scoreArc" cx="48" cy="48" r="40" fill="none"
+                                                stroke="var(--accent)" stroke-width="9" stroke-linecap="round"
+                                                stroke-dasharray="251.2" stroke-dashoffset="251.2"/>
+                                    </svg>
+                                    <div class="score-num"><span id="scoreVal">–</span><small id="scoreGrade"></small></div>
+                                </div>
+                                <div class="score-bars" id="scoreBars"></div>
+                            </div>
+                            <div id="issueTable" style="margin-top:14px"></div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-head">
+                            <h3>字段画像 <span class="sub" id="colCount"></span></h3>
+                            <span class="hint">缺失率与取值分布</span>
+                        </div>
+                        <div class="tbl-wrap"><table class="tbl" id="colTable"></table></div>
+                    </div>
+                    <div class="chart-grid-2">
+                        <div class="card">
+                            <div class="card-head"><h3>相关性矩阵
+                                <span class="tip" data-tip="数值列两两相关系数。接近 1 为正相关，接近 -1 为负相关，接近 0 表示无线性关系。">?</span></h3></div>
+                            <div class="card-body"><div id="chartCorr" class="chart-box sm"></div></div>
+                        </div>
+                        <div class="card">
+                            <div class="card-head"><h3>缺失值分布
+                                <span class="tip" data-tip="颜色越深表示该列缺失比例越高。空字符串与缺失值的语义不同，需注意区分。">?</span></h3></div>
+                            <div class="card-body"><div id="chartMiss" class="chart-box sm"></div></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ---------- 可视化 ---------- -->
+            <section class="view" id="view-chart">
+                <div class="card">
+                    <div class="card-head">
+                        <h3>分析目的</h3>
+                        <span class="hint">选择分析目的，自动匹配图表类型</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="intent-grid" id="intentGrid"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <h3>图表设置</h3>
+                        <div class="row">
+                            <button class="btn btn-sm" id="btnAddChart">新增图表</button>
+                        </div>
+                    </div>
+                    <div class="card-body" id="chartHost"></div>
+                </div>
+            </section>
+
+            <!-- ---------- 数据清洗 ---------- -->
+            <section class="view" id="view-clean">
+                <div class="card">
+                    <div class="card-head">
+                        <h3>数据清洗</h3>
+                        <span class="hint">每步操作同步生成 pandas 代码</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="op-intro">
+                            <span>💡</span>
+                            <div>从下方场景中选择，或使用自定义步骤组合。预览确认后应用，
+                                结果保存为新数据集，原始数据不受影响。</div>
+                        </div>
+                        <div class="op-group-title">常用场景</div>
+                        <div class="scenario-grid" id="scenarioGrid"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head"><h3>自定义步骤</h3>
+                        <span class="hint">选中操作后显示使用场景与效果示例</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-row">
+                            <div class="field" style="max-width:250px">
+                                <label>操作</label>
+                                <select id="opSelect"></select>
+                            </div>
+                            <div class="field">
+                                <label>目标列 <span class="hint" id="colHint"></span></label>
+                                <select id="opColumns" multiple size="5"></select>
+                            </div>
+                        </div>
+                        <div id="opExtra" class="form-row"></div>
+                        <div id="opWhen"></div>
+                        <div id="opExample"></div>
+                        <div class="row" style="margin-top:12px">
+                            <button class="btn btn-primary btn-sm" id="btnAddOp">添加为步骤</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head"><h3>清洗流程 <span class="sub" id="pipeCount"></span></h3>
+                        <div class="row">
+                            <button class="btn btn-sm" id="btnPreviewClean">预览</button>
+                            <button class="btn btn-sm" id="btnClearOps">清空</button>
+                            <button class="btn btn-primary btn-sm" id="btnApplyClean">应用并另存</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="step-list" id="stepList"></div>
+                        <div id="cleanDiff"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head"><h3>pandas 代码</h3>
+                        <div class="row">
+                            <button class="btn btn-sm" id="btnCopyCode">复制</button>
+                            <a id="btnDownloadCode" class="btn btn-sm" download="cleaning_script.py">下载 .py</a>
+                        </div>
+                    </div>
+                    <div class="card-body"><pre id="codeBox" class="mono" style="margin:0;white-space:pre-wrap;max-height:420px;overflow:auto">执行清洗后在此生成完整脚本。</pre></div>
+                </div>
+            </section>
+
+            <!-- ---------- SQL ---------- -->
+            <section class="view" id="view-sql">
+                <div class="sql-layout">
+                    <div class="card" style="align-self:start">
+                        <div class="card-head"><h3>可用表</h3></div>
+                        <div class="card-body" id="schemaList" style="padding:8px"></div>
+                    </div>
+                    <div>
+                        <div class="card">
+                            <div class="card-head">
+                                <h3>SQL 查询 <span class="sub">只读，支持窗口函数与 CTE</span></h3>
+                                <div class="row">
+                                    <select id="sqlTpl" style="width:172px">
+                                        <option value="">— 查询模板 —</option>
+                                    </select>
+                                    <label class="hint">返回
+                                        <select id="sqlLimit" style="width:88px;display:inline-block">
+                                            <option>1000</option><option selected>5000</option><option>20000</option>
+                                        </select>
+                                        行
+                                    </label>
+                                    <button class="btn btn-primary btn-sm" id="btnRunSql">运行（Ctrl+Enter）</button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <textarea id="sqlText" rows="7" spellcheck="false">SELECT * FROM ecommerce_orders LIMIT 100</textarea>
+                                <div class="row" style="margin-top:8px">
+                                    <button class="btn btn-sm" id="btnSaveSql">保存结果为数据集</button>
+                                    <span class="hint" id="sqlStatus"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-head"><h3>查询结果 <span class="sub" id="sqlResultMeta"></span></h3></div>
+                            <div class="tbl-wrap" style="max-height:480px"><table class="tbl" id="sqlTable"></table></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ---------- 数据对比 ---------- -->
+            <section class="view" id="view-compare">
+                <div class="card">
+                    <div class="card-head">
+                        <h3>数据对比 <span class="sub">结构差异、行级变更、分布漂移</span></h3>
+                        <div class="row">
+                            <button class="btn btn-primary btn-sm" id="btnCompare">执行对比</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-row">
+                            <div class="field">
+                                <label>基准数据集</label>
+                                <select id="cmpLeft"></select>
+                            </div>
+                            <div class="field">
+                                <label>对比数据集</label>
+                                <select id="cmpRight"></select>
+                            </div>
+                            <div class="field" style="max-width:240px">
+                                <label>关联键
+                                    <span class="tip" data-tip="用于逐行比对的唯一标识列，如订单号、用户 ID。指定后可识别新增、删除及被修改的记录。">?</span>
+                                </label>
+                                <select id="cmpKey"><option value="">不指定（仅比较结构与分布）</option></select>
+                            </div>
+                        </div>
+                        <div class="hint" id="cmpHint">指定关联键后，可识别新增行、删除行、字段变更及数值分布漂移。</div>
+                    </div>
+                </div>
+                <div id="cmpResult"></div>
+            </section>
+        </div>
+    </main>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+<div id="modalHost"></div>
+
+<script src="/static/vendor/echarts.min.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
